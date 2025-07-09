@@ -1,0 +1,552 @@
+---
+title: "Determinação de marcadores de aditivação em EHA"
+output: html_document
+author: "Leonardo Gonçalves"
+date: "2025-01-24"
+---
+
+# Pacotes utilizados
+
+```{r Carregamento de pacotes, message=FALSE, warning=FALSE}
+library(plotly)
+library(tidymodels)
+## install BiocManager if not installed 
+#if (!requireNamespace("BiocManager", quietly = TRUE))    
+#install.packages("BiocManager")
+## then install mixOmics
+#BiocManager::install("mixOmics")
+library(mixOmics)
+```
+# Carregando a base de dados
+## Carregando base de dados para EHA/EHC
+
+```{r Carregamento base de dados}
+df <- read.csv('data2_areaR.csv',header = T, sep = ";",dec = ".")
+rownames(df)= df[,1]                          
+data <- df[,4:64]
+categoria <- df$categoria
+amostras <- df$amostra
+bandeira <- df$bandeira
+```
+
+
+# Análise exploratória dos dados
+
+## PCA
+```{r PCA QC}
+prin_comp <- prcomp(data, center = T, scale. = T)
+components <- prin_comp[["x"]]
+components <- data.frame(components, categoria, amostras)
+
+#plotPCA
+font.config <- list(
+  family = "sans serif",
+  size = 12,
+  color = 'black')
+
+fig <- plot_ly(components, 
+        x = ~PC1, 
+        y = ~PC2, 
+        color = ~categoria, 
+        colors = c('#BF382A', '#0C4B8E'), 
+        type = 'scatter', 
+        mode = 'markers',
+        text = ~amostras,
+        size = 3)|> 
+  layout(xaxis = list(title = "PC1 29.2%"), 
+         yaxis = list(title = "PC2 17.8%"),
+         title = "",
+         font = font.config)
+fig 
+
+orca(fig, file="PCA.png", scale = 3)
+#orca(fig, file="PCA.svg")
+```
+
+```{r PCA 3d}
+
+tot_explained_variance_ratio <- summary(prin_comp)[["importance"]]
+tot_explained_variance_ratio
+tit = 'PCA 3d'
+
+fig1_3d <-plot_ly(components, 
+        x = ~PC1,
+        y = ~PC2,
+        z = ~PC3,
+        color = ~categoria,
+        colors = c('#BF382A', '#0C4B8E'),
+         text = ~amostras,
+        type = "scatter3d",
+        mode = "markers",
+        size = 3) |> 
+  layout(scene = list(xaxis = list(title = "PC1 29,2%"), 
+                        yaxis = list(title = "PC2 17,8%"),
+                         zaxis = list(title= "PC3 13,2%")),
+            title = "PCA")
+fig1_3d
+
+# orca(fig1_3d, file="PCA3d.svg")
+
+```
+
+```{r PCA EHA Labels}
+fig2 <- plot_ly(components, 
+        x = ~PC1, 
+        y = ~PC2, 
+        color = ~bandeira, 
+        colors = c('orange','black','#BF382A','green4','#0C4B8E'), 
+        type = 'scatter', 
+        mode = 'markers',
+        text = ~amostras,
+        size = 3)|> 
+  layout(xaxis = list(title = "PC1 29.2%"), 
+         yaxis = list(title = "PC2 17.8%"),
+         title = "",
+         font = font.config)
+fig2 
+
+#orca(fig2, file="PCA_band.png", scale = 3)
+
+```
+
+```{r PCA 3d EHA Labels}
+plot_ly(components, 
+        x = ~PC1,
+        y = ~PC2,
+        z = ~PC3,
+        color = ~bandeira,
+        colors = c('orange','black','#BF382A','green4','#0C4B8E'),
+         text = ~amostras,
+        type = "scatter3d",
+        mode = "markers")%>%
+  layout(scene = list(xaxis = list(title = "PC1 29,2%"), 
+                        yaxis = list(title = "PC2 17,8%"),
+                         zaxis = list(title= "PC3 13,2%")),
+            title = "PCA Bandeira")
+
+```
+
+# PLS-DA
+
+## PLS-DA
+Aqui, foi calculado uma PLS-DA levando em consideração a categoria para identificar qual são os marcadores importantes que distinguem cada marca.
+```{r PLS-DA}
+X <- data
+Y <- categoria
+
+#Calculando a PLS-DA
+result.plsda <- plsda(X, Y, scale = TRUE, ncomp = 5)
+
+# CV
+set.seed(123)
+vald_plsda <- perf(result.plsda, validation = "Mfold", folds = 5, progressBar = F, auc = T, nrepeat = 100)
+plot(vald_plsda, col = color.mixo(1:3), sd = T,legend.position="horizontal")
+
+# https://rdrr.io/cran/mixOmics/man/plot.perf.html para ajudar no plot
+
+# Escolhendo a melhor VL para a discriminação dos grupos
+vald_plsda$choice.ncomp
+
+# AUC
+vald_plsda$auc$comp4
+
+# Plots
+plsda_varcomps <- result.plsda$variates$X[,1:3]
+
+datapls <- data.frame(plsda_varcomps,categoria)
+cores <- c('#BF382A', '#0C4B8E')
+
+# Plot interativo 2d
+plot_ly(data = datapls,
+        x = ~ comp1,
+        y = ~ comp2,
+        colors = cores,
+        type = "scatter",
+        mode = "markers",
+        color = ~ categoria,
+        size = 1)%>%
+   layout(xaxis = list(title = "Componente 1"), 
+         yaxis = list(title = "Componente 2"),
+         title = "PLS-DA")
+
+# 3d
+plot_ly(data = datapls,
+        x = ~ comp1,
+        y = ~ comp2,
+        z = ~ comp3,
+        colors = cores,
+        type = "scatter3d",
+        mode = "markers",
+        color = ~ categoria) %>%
+  layout(scene = list(xaxis = list(title = "Componente 1"), 
+                        yaxis = list(title = "Componente 2"),
+                         zaxis = list(title= "Componente 3")),
+            title = "PLS-DA 3d",
+         font = font.config)
+
+# Calculo VIPScores PLS-DA
+vipscores <- vip(result.plsda) #calculo dos VIPScores da plsda 
+vipscores.df <- data.frame(vipscores,colnames(X)) #df juntando vipscores + nome das variáveis
+vip_cutoff = 1.1 #parâmetro
+
+# Calculo dos VIPScores mais importantes para quarta componente
+vipscores4comp <- vipscores.df[which(vipscores.df[,4] >= vip_cutoff),c(4,6)] #esse comando seleciona com o which quais variáveis são maiores que o parâmetro '=>vip_cutoff = 1'. o 'c(1,4) significa, o 1 a primeira componentes e o 4 a coluna com o nome da variável. Foi escolhido a 4 comp no comando 'vald_plsda$choice.ncomp'.
+
+# Lista de Variáveis mais importantes
+vipscores4comp
+```
+A PLS-DA apresentou acurácia de 0,96857 com desvio padrão de 0,00369 na quarta variável latente. Excelente modelo para predição de EHA/EHC. 
+
+Foram selecionados na 4 componente, 27 variáveis com o VIPScore >= 1.
+
+## PLS-DA sem o grupo Shell
+```{r PLS-DA sem o grupo Shell}
+
+#Retirando o grupo shell da base de dados
+df2 <- df[df$bandeira!='EHA-S',]
+X2 <- df2[,4:64]
+categoria2 <- df2$categoria
+Y2 <- categoria2
+
+#PLS-DA sem shell categoria
+result.plsda2 <- plsda(X2, Y2, scale = TRUE, ncomp=5)
+
+# CV
+set.seed(1234)
+vald_plsda2 <- perf(result.plsda2, validation = "Mfold", folds = 5, progressBar = F, auc = T, nrepeat = 100)
+plot(vald_plsda2, col = color.mixo(1:3), sd = T,legend.position="horizontal")
+
+#Selecionando a VL mais importante
+vald_plsda2$choice.ncomp
+
+#AUC da 3 comp
+vald_plsda$auc$comp3
+
+#Plot 3d da PLS-DA Sem shell
+plsda2_varcomps <- result.plsda2$variates$X[,1:3]
+datapls2 <- data.frame(plsda2_varcomps,categoria2)
+plot_ly(data = datapls2,
+        x = ~ comp1,
+        y = ~ comp2,
+        z = ~ comp3,
+        colors = cores,
+        type = "scatter3d",
+        mode = "markers",
+        color = ~categoria2) %>%
+  layout(scene = list(xaxis = list(title = "Componente 1"), 
+                        yaxis = list(title = "Componente 2"),
+                         zaxis = list(title= "Componente 3")),
+            title = "PLS-DA 3d",
+         font = font.config)
+
+
+#Calculo VIPScores PLS-DA sem Shell
+vipscores2 <- vip(result.plsda2) #calculo dos VIPScores da plsda 
+vipscores.df2 <- data.frame(vipscores2,colnames(X2)) #df juntando vipscores + nome das variáveis
+vip_cutoff2 = 1.1
+
+#Calculo dos VIPScores mais importantes para primeira componente
+vipscores3comp <- vipscores.df2[which(vipscores.df2[,3] >= vip_cutoff2),c(3,6)] 
+#Esse comando seleciona com o which quais variáveis são maiores que o parâmetro '=>vip_cutoff = 1'. o 'c(1,4) significa, o 1 a primeira componentes e o 4 a coluna com o nome da variável. 
+
+vipscores3comp
+
+```
+Foi escolhida a terceira componente para a PLS-DA EHA/EHC sem o grupo Shell e 11 compostos foram selecionados com VIPScores >1.1 para essa componente. 
+
+# Determinação dos Marcadores por origem da aditivação
+
+## Marcadores selecionados - PLS-DA sem o grupo shell
+```{r heatmap PLS-DA sem o grupo shell}
+# heatmap com melhor as variáveis da PLS-DA sem o grupo Shell
+df.heatmap <- df2[,vipscores3comp$colnames.X2.]
+df.heatmap_scaled <- scale(df.heatmap,center = TRUE, scale = TRUE) 
+bandeira2 <- df2$bandeira
+df.heatmap.cat <- data.frame(bandeira2,df.heatmap_scaled)
+
+variables <- colnames(df.heatmap) 
+values <- as.matrix(df.heatmap.cat[,2:12])
+
+# cores
+vals <- unique(scales::rescale(c(volcano)))
+o <- order(vals, decreasing = FALSE)
+cols <- scales::col_numeric("reds", domain = NULL)(vals)
+colz <- setNames(data.frame(vals[o], cols[o]), NULL)
+
+# heatmap bandeira
+fig3 <- plot_ly(x=variables,y=bandeira2, z = values, type = "heatmap",colorscale = colz) |> layout(font=font.config)
+fig3
+```
+
+## Marcadores selecionados - PLS-DA
+```{r heatmap PLS-DA}
+# heatmap com melhor as variáveis da PLS-DA com o grupo Shell
+df2.heatmap <- df[,vipscores4comp$colnames.X.]
+df2.heatmap_scaled <- scale(df2.heatmap,center = TRUE, scale = TRUE) 
+df2.heatmap.cat <- data.frame(bandeira,df2.heatmap_scaled)
+
+variables2 <- colnames(df2.heatmap) 
+values2 <- as.matrix(df2.heatmap.cat[,2:19])
+
+# cores
+vals <- unique(scales::rescale(c(volcano)))
+o <- order(vals, decreasing = FALSE)
+cols <- scales::col_numeric("reds", domain = NULL)(vals)
+colz <- setNames(data.frame(vals[o], cols[o]), NULL)
+
+# heatmap bandeira
+fig5 <- plot_ly(x=variables2,
+                y=bandeira, 
+                z = values2, 
+                type = "heatmap",
+                colorscale = colz) |> layout(font=font.config)
+fig5
+#orca(fig4, file="heatmap.png", scale = 3)
+```
+
+## Teste de performance dos marcadores selecionados
+
+# Teste com 3 marcadores x25,x29,x59
+```{r}
+
+df.marcadores <- data.frame(categoria,df[,c(28,32,61)])
+# Supondo que df.marcadores já foi criado conforme seu código
+df.marcadores$categoria <- ifelse(df.marcadores$categoria == "EHA", 1, 
+                                  ifelse(df.marcadores$categoria == "EHC", -1, df.marcadores$categoria))
+# Transformando a coluna 'categoria' de volta para numérico
+df.marcadores$categoria <- as.numeric(as.character(df.marcadores$categoria))
+
+# Verificando a transformação
+str(df.marcadores$categoria)
+
+#Regressão
+lm_model <- linear_reg() %>%
+  set_engine('lm') %>% 
+  set_mode('regression') %>%
+  fit(categoria ~ VOC25 * VOC29 * VOC59, data = df.marcadores)
+summary(lm_model)
+
+#Predição
+df_predict <- lm_model %>% predict(df)
+rownames(df_predict) <- rownames(df) 
+df_predict
+summary(lm_model)
+
+#Plot
+fig6 <- plot_ly(df, y = ~ lm_model$fit$fitted.values, x = ~categoria,
+        colors = categoria,
+        type = 'scatter', 
+        alpha = 0.2, 
+        mode = 'markers', 
+        name = 'Tips',
+        text = rownames(df_predict)) %>%
+  layout(xaxis = list(title = "Categoria"), 
+         yaxis = list(title = "Valor Predito"),
+         title = "")
+
+# Cálculo da acurácia
+# Sendo, o positivo a aditivação:
+# VP <- Qtd de EHA dado como EHA (qtd EHA > 0)
+# VN <- Qtd de EHC dado como EHC (qtd EHC < 0)
+# FP <- Qtd de EHC dado como EHA (qtd EHC > 0)
+# FN <- Qtd de EHA dado como EHC (qtd EHA < 0)
+df_predict1 <- data.frame(df_predict$.pred,rownames(df_predict), categoria)
+VP <- df_predict1[which(df_predict1$df_predict..pred>0 & df_predict1$categoria=="EHA"),]
+nrow(VP)
+VN <- df_predict1[which(df_predict1$df_predict..pred<0 & df_predict1$categoria=="EHC"),]
+nrow(VN)
+FP <- df_predict1[which(df_predict1$df_predict..pred>0 & df_predict1$categoria=="EHC"),]
+nrow(FP)
+FN <- df_predict1[which(df_predict1$df_predict..pred<0 & df_predict1$categoria=="EHA"),]
+nrow(FN)
+
+AUC = 100*(nrow(VP)+nrow(VN))/(nrow(VP)+nrow(VN)+nrow(FP)+nrow(FN))
+AUC
+
+ESP=100*(nrow(VN)/((nrow(VN)+nrow(FP))))
+ESP
+
+SENS=100*(nrow(VP)/((nrow(VP)+nrow(FN))))
+SENS
+
+#orca(fig6, file="fitted_values.png", scale = 3)
+
+```
+Das 8 amostras EHA que não foram classificadas corretamente, 4 eram de bandeira branca. Para testar vou adicionar um marcador para as "outras bandeiras"
+
+# Teste com 4 marcadores x25,x29,x59,x34
+```{r}
+
+df.marcadores2 <- data.frame(categoria,df[,c(28,32,61,37)])
+df.marcadores2$categoria <- ifelse(df.marcadores2$categoria == "EHA", 1, 
+                                  ifelse(df.marcadores2$categoria == "EHC", -1, df.marcadores2$categoria))
+
+# Transformando a coluna 'categoria' de volta para numérico
+df.marcadores2$categoria <- as.numeric(as.character(df.marcadores2$categoria))
+
+# Verificando a transformação
+str(df.marcadores2$categoria)
+
+#Regressão
+lm_model2 <- linear_reg() %>%
+  set_engine('lm') %>% 
+  set_mode('regression') %>%
+  fit(categoria ~ VOC25 * VOC29 * VOC59 * VOC34, data = df.marcadores2)
+summary(lm_model2)
+
+#Predição
+df_predict2 <- lm_model2 %>% predict(df)
+rownames(df_predict2) <- rownames(df) 
+df_predict2
+summary(lm_model2)
+
+#Plot
+plot_ly(df, y = ~ lm_model2$fit$fitted.values, x = ~categoria,
+        colors = categoria,
+        type = 'scatter', 
+        alpha = 0.2, 
+        mode = 'markers', 
+        name = 'Tips',
+        text = rownames(df_predict2)) %>%
+  layout(xaxis = list(title = "Categoria"), 
+         yaxis = list(title = "Valor Predito"),
+         title = "PLS-DA")
+
+# Cálculo da acurácia
+# Sendo, o positivo a aditivação:
+# VP <- Qtd de EHA dado como EHA (qtd EHA > 0)
+# VN <- Qtd de EHC dado como EHC (qtd EHC < 0)
+# FP <- Qtd de EHC dado como EHA (qtd EHC > 0)
+# FN <- Qtd de EHA dado como EHC (qtd EHA < 0)
+df_predict2_1 <- data.frame(df_predict2$.pred,rownames(df_predict2), categoria)
+VP2 <- df_predict2_1[which(df_predict2_1$df_predict2..pred>0 & df_predict2_1$categoria=="EHA"),]
+nrow(VP)
+VN2 <- df_predict1[which(df_predict2_1$df_predict2..pred<0 & df_predict2_1$categoria=="EHC"),]
+nrow(VN)
+FP2 <- df_predict1[which(df_predict2_1$df_predict2..pred>0 & df_predict2_1$categoria=="EHC"),]
+nrow(FP)
+FN2 <- df_predict1[which(df_predict2_1$df_predict2..pred<0 & df_predict2_1$categoria=="EHA"),]
+nrow(FN)
+
+AUC2= 100*(nrow(VP2)+nrow(VN2))/(nrow(VP2)+nrow(VN2)+nrow(FP2)+nrow(FN2))
+AUC2
+```
+Acurácia ficou a mesma.
+
+# Teste com 4 marcadores x25,x29,x59,x11
+```{r}
+df.marcadores3 <- data.frame(categoria,df[,c(28,32,61,14)])
+df.marcadores3$categoria <- ifelse(df.marcadores3$categoria == "EHA", 1, 
+                                  ifelse(df.marcadores3$categoria == "EHC", -1, df.marcadores3$categoria))
+
+# Transformando a coluna 'categoria' de volta para numérico
+df.marcadores3$categoria <- as.numeric(as.character(df.marcadores3$categoria))
+
+# Verificando a transformação
+str(df.marcadores3$categoria)
+
+#Regressão
+lm_model3 <- linear_reg() %>%
+  set_engine('lm') %>% 
+  set_mode('regression') %>%
+  fit(categoria ~ VOC25 * VOC29 * VOC59 * VOC11, data = df.marcadores3)
+summary(lm_model3)
+
+#Predição
+df_predict3 <- lm_model3 %>% predict(df)
+rownames(df_predict3) <- rownames(df) 
+df_predict3
+summary(lm_model3)
+
+#Plot
+plot_ly(df, y = ~ lm_model3$fit$fitted.values, x = ~categoria,
+        colors = categoria,
+        type = 'scatter', 
+        alpha = 0.2, 
+        mode = 'markers', 
+        name = 'Tips',
+        text = rownames(df_predict3)) %>% 
+  layout(xaxis = list(title = "Categoria"), 
+         yaxis = list(title = "Valor Predito"),
+         title = "PLS-DA") 
+
+# Cálculo da acurácia
+# Sendo, o positivo a aditivação:
+# VP <- Qtd de EHA dado como EHA (qtd EHA > 0)
+# VN <- Qtd de EHC dado como EHC (qtd EHC < 0)
+# FP <- Qtd de EHC dado como EHA (qtd EHC > 0)
+# FN <- Qtd de EHA dado como EHC (qtd EHA < 0)
+df_predict3_1 <- data.frame(df_predict3$.pred,rownames(df_predict3), categoria)
+VP3 <- df_predict3_1[which(df_predict3_1$df_predict3..pred>0 & df_predict3_1$categoria=="EHA"),]
+nrow(VP3)
+VN3 <- df_predict3_1[which(df_predict3_1$df_predict3..pred<0 & df_predict3_1$categoria=="EHC"),]
+nrow(VN3)
+FP3 <- df_predict3_1[which(df_predict3_1$df_predict3..pred>0 & df_predict3_1$categoria=="EHC"),]
+nrow(FP3)
+FN3 <- df_predict3_1[which(df_predict3_1$df_predict3..pred<0 & df_predict3_1$categoria=="EHA"),]
+nrow(FN3)
+
+AUC3= 100*(nrow(VP3)+nrow(VN3))/(nrow(VP3)+nrow(VN3)+nrow(FP3)+nrow(FN3))
+AUC3
+
+```
+
+Foi escolhido o Modelo 1 com três marcadores!
+
+
+# Determinação dos Marcadores de aditivação por análise combinatória?
+```{r}
+df2.models <- data.frame(categoria,df2.heatmap)
+df2.models$categoria <- ifelse(df2.models$categoria == "EHA", 1, 
+                ifelse(df2.models$categoria == "EHC", -1, df2.models$categoria))
+
+# Transformando a coluna 'categoria' de volta para numérico
+df2.models$categoria <- as.numeric(as.character(df2.models$categoria))
+
+# Verificando a transformação
+str(df2.models$categoria)
+
+variables <- colnames(df2.models)[2:ncol(df2.models)]
+formulas <- list()
+for (i in seq_along(variables)) {
+  tmp <- combn(variables, i)
+  tmp <- apply(tmp, 2, paste, collapse="+")
+  tmp <- paste0("categoria~", tmp)
+  formulas[[i]] <- tmp
+}
+formulas <- unlist(formulas)
+formulas <- sapply(formulas, as.formula)
+summary(formulas)
+models <- lapply(formulas, lm, data=df2.models)
+
+
+# Define função para calcular métricas
+get_metrics <- function(model) {
+  y_true <- model$model$categoria
+  y_pred <- predict(model)
+  
+  r2   <- summary(model)$r.squared
+  rmse <- sqrt(mean((y_true - y_pred)^2))
+  mae  <- mean(abs(y_true - y_pred))
+  
+  return(c(R2 = r2, RMSE = rmse, MAE = mae))
+}
+
+# Aplica a função a todos os modelos
+results <- t(sapply(models, get_metrics))
+
+# Converte para data frame
+results_df <- as.data.frame(results)
+
+# Adiciona a fórmula associada a cada modelo
+formulas_chr <- sapply(formulas, deparse)
+results_df$formula <- formulas_chr
+
+# Reorganiza as colunas
+results_df <- results_df[, c("formula", "R2", "RMSE", "MAE")]
+
+# Exibe os 10 modelos com maior R²
+head(results_df[order(-results_df$R2), ], 10)
+
+```
+
